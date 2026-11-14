@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AAVSO Light Curve</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --line:#d9dde3; --text:#1d232b; --muted:#66707c; --accent:#2b5fab; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--text); background:var(--bg); }
+  header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; }
+  header h1 { font-size:17px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  main { display:grid; grid-template-columns: 320px 1fr; gap:12px; padding:12px; height: calc(100vh - 46px); }
+  aside { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; display:flex; flex-direction:column; min-width:0; }
+  label { display:block; font-weight:600; margin:10px 0 4px; }
+  input[type=text], input[type=number] { width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:5px; font:inherit; }
+  .row { display:flex; gap:8px; }
+  .row > div { flex:1; min-width:0; }
+  .hint { color:var(--muted); font-size:12px; min-height:16px; }
+  .bands { display:grid; grid-template-columns: 1fr 1fr; gap:2px 8px; max-height:260px; overflow:auto; border:1px solid var(--line); border-radius:5px; padding:6px; }
+  .bands label { font-weight:400; margin:0; display:flex; align-items:center; gap:5px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sw { width:10px; height:10px; border-radius:2px; flex:none; border:1px solid #0002; }
+  .btns { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+  button { padding:6px 10px; border:1px solid var(--line); background:#fff; border-radius:5px; font:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .small { font-size:12px; padding:3px 7px; }
+  select { width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:5px; font:inherit; background:#fff; }
+  .seg { display:flex; gap:14px; }
+  .seg label { font-weight:400; margin:0; display:flex; gap:5px; align-items:center; }
+  #phaseBox { margin-top:2px; }
+  #phaseBox.off, #hjdBox.off { opacity:.55; }
+  .opts label { font-weight:400; display:flex; gap:6px; align-items:center; margin:4px 0; }
+  #status { margin-top:10px; font-size:13px; white-space:pre-wrap; }
+  #status.err { color:#b00020; }
+  #info { font-size:13px; padding:4px 6px 8px; color:var(--muted); }
+  #info b { color:var(--text); }
+  #plot { flex:1; min-height:300px; }
+  details { margin-top:12px; }
+  summary { cursor:pointer; font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AAVSO International Database: Light Curve</h1>
+  <span>data via the VSX API (the same service VStar uses)</span>
+</header>
+<main>
+  <aside>
+    <form id="form">
+      <label for="star">Star name (VSX)</label>
+      <input type="text" id="star" placeholder="e.g. SS Cyg, R Leo, 000-BBC-193" value="SS Cyg" required>
+
+      <div class="row">
+        <div>
+          <label for="minjd">Minimum JD</label>
+          <input type="number" id="minjd" step="any" placeholder="all">
+          <div class="hint" id="mindate"></div>
+        </div>
+        <div>
+          <label for="maxjd">Maximum JD</label>
+          <input type="number" id="maxjd" step="any" placeholder="all">
+          <div class="hint" id="maxdate"></div>
+        </div>
+      </div>
+      <div class="btns">
+        <button type="button" class="small" data-days="30">30 days</button>
+        <button type="button" class="small" data-days="365">1 year</button>
+        <button type="button" class="small" data-days="3652">10 years</button>
+        <button type="button" class="small" data-days="0">All</button>
+      </div>
+
+      <label>Bands</label>
+      <div class="bands" id="bands"></div>
+      <div class="btns">
+        <button type="button" class="small" id="bandsAll">All</button>
+        <button type="button" class="small" id="bandsNone">None</button>
+        <button type="button" class="small" id="bandsCommon">Vis. + V</button>
+      </div>
+
+      <div class="opts">
+        <label style="font-weight:600;margin-top:10px">Show</label>
+        <label><input type="checkbox" id="optFainter" checked> Fainter-than (▼)</label>
+        <label><input type="checkbox" id="optDiscrepant"> Discrepant (val = D/T)</label>
+        <label><input type="checkbox" id="optErr" checked> Error bars</label>
+      </div>
+
+      <label>X axis</label>
+      <div class="seg">
+        <label><input type="radio" name="xmode" value="time" checked> Time (JD)</label>
+        <label><input type="radio" name="xmode" value="phase"> Phase</label>
+      </div>
+      <div class="opts">
+        <label><input type="checkbox" id="optHJD"> Convert JD → HJD</label>
+      </div>
+      <div id="hjdBox" class="off">
+        <div class="row">
+          <div>
+            <label for="ra">RA (J2000), °</label>
+            <input type="number" id="ra" step="any" min="0" max="360" placeholder="0…360">
+          </div>
+          <div>
+            <label for="dec">Dec (J2000), °</label>
+            <input type="number" id="dec" step="any" min="-90" max="90" placeholder="−90…90">
+          </div>
+        </div>
+        <div class="hint" id="hjdHint" style="white-space:pre-line"></div>
+      </div>
+      <div id="phaseBox">
+        <div class="row">
+          <div>
+            <label for="period">Period, days</label>
+            <input type="number" id="period" step="any" min="0" placeholder="P">
+          </div>
+          <div>
+            <label for="epoch" id="epochLabel">Epoch, JD</label>
+            <input type="number" id="epoch" step="any" placeholder="E">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="phrange">Phase range</label>
+            <select id="phrange">
+              <option value="-1" selected>−1 … 1 (VStar)</option>
+              <option value="-0.5">−0.5 … 1</option>
+              <option value="0">0 … 1</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <button type="button" class="small" id="useVsx" style="width:100%">Use P and E from VSX</button>
+          </div>
+        </div>
+        <div class="hint" id="phaseHint"></div>
+      </div>
+
+      <div class="btns" style="margin-top:12px">
+        <button type="submit" class="primary" id="load">Load</button>
+        <button type="button" id="stop" disabled>Stop</button>
+        <button type="button" id="csv" disabled>Save CSV</button>
+      </div>
+      <div id="status"></div>
+
+      <details>
+        <summary>Connection</summary>
+        <label for="api">API endpoint</label>
+        <input type="text" id="api">
+        <div class="hint">If the page is opened directly as a file and the browser blocks the request (CORS),
+        run <code>python aavso_proxy.py</code> and open http://localhost:8765/.
+        The endpoint is then <code>/vsx</code>.</div>
+        <label for="pagesize">Observations per request page</label>
+        <input type="number" id="pagesize" value="10000" min="100" max="50000">
+      </details>
+    </form>
+  </aside>
+  <section>
+    <div id="info">Enter a star name and click “Load”.</div>
+    <div id="plot"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// Band short names (AID "band" values) and colours, as in VStar's SeriesType.
+const BANDS = [
+  ["Vis.", "Visual", [0,0,0]],
+  ["V", "Johnson V", [0,255,0]],
+  ["B", "Johnson B", [0,0,255]],
+  ["U", "Johnson U", [0,255,255]],
+  ["R", "Cousins R", [255,0,0]],
+  ["I", "Cousins I", [255,64,0]],
+  ["RJ", "Johnson R", [192,0,64]],
+  ["IJ", "Johnson I", [192,64,128]],
+  ["CV", "Unfiltered, V zp", [0,192,0]],
+  ["CR", "Unfiltered, R zp", [192,0,0]],
+  ["CBB", "Clear Blue Blocking", [255,220,32]],
+  ["TG", "Tri-Color Green", [0,128,0]],
+  ["TB", "Tri-Color Blue", [0,0,128]],
+  ["TR", "Tri-Color Red", [128,0,0]],
+  ["SU", "Sloan u", [192,192,0]],
+  ["SG", "Sloan g", [0,64,64]],
+  ["SR", "Sloan r", [128,64,0]],
+  ["SI", "Sloan i", [192,64,0]],
+  ["SZ", "Sloan z", [255,192,0]],
+  ["STU", "Strömgren u", [0,192,255]],
+  ["STV", "Strömgren v", [0,255,192]],
+  ["STB", "Strömgren b", [0,0,192]],
+  ["STY", "Strömgren y", [192,255,0]],
+  ["STHBW", "Strömgren Hβ wide", [0,128,255]],
+  ["STHBN", "Strömgren Hβ narrow", [0,128,192]],
+  ["J", "J NIR 1.2µm", [255,0,255]],
+  ["H", "H NIR 1.6µm", [128,128,128]],
+  ["K", "K NIR 2.2µm", [255,128,255]],
+  ["HA", "Hα", [192,32,0]],
+  ["HAC", "Hα continuum", [192,32,0]],
+  ["ZS", "PanSTARRS z-short", [255,64,32]],
+  ["Y", "PanSTARRS Y", [96,0,0]],
+  ["GG", "Gaia G", [255,165,0]],
+  ["MA", "Optec Wing A", [128,64,255]],
+  ["MB", "Optec Wing B", [128,64,128]],
+  ["MI", "Optec Wing C", [128,0,192]],
+  ["Blue-Vis.", "Blue (visual)", [0,0,75]],
+  ["Green-Vis.", "Green (visual)", [0,75,0]],
+  ["Red-Vis.", "Red (visual)", [75,0,0]],
+  ["Yellow-Vis.", "Yellow (visual)", [200,200,60]],
+  ["Orange", "Orange (Liller)", [255,128,0]],
+];
+const COMMON = ["Vis.", "V"];
+const bandColor = Object.fromEntries(BANDS.map(([s,,c]) => [s, `rgb(${c.join(",")})`]));
+
+const $ = id => document.getElementById(id);
+let obs = [];          // loaded observations
+let starMeta = null;   // VSX object info
+let abortCtl = null;
+
+// ---------- UI setup ----------
+(function initBands() {
+  const box = $("bands");
+  for (const [short, name] of BANDS) {
+    const l = document.createElement("label");
+    l.title = `${name} (${short})`;
+    l.innerHTML = `<input type="checkbox" value="${short}" ${COMMON.includes(short) ? "checked" : ""}>
+      <span class="sw" style="background:${bandColor[short]}"></span>${name}`;
+    box.appendChild(l);
+  }
+})();
+const bandBoxes = () => [...document.querySelectorAll("#bands input")];
+$("bandsAll").onclick = () => bandBoxes().forEach(b => b.checked = true);
+$("bandsNone").onclick = () => bandBoxes().forEach(b => b.checked = false);
+$("bandsCommon").onclick = () => bandBoxes().forEach(b => b.checked = COMMON.includes(b.value));
+
+$("api").value = location.protocol === "file:" ? "https://vsx.aavso.org/index.php" : "/vsx";
+
+// JD <-> calendar date
+const jdNow = () => Date.now() / 86400000 + 2440587.5;
+const jdToISO = jd => {
+  const d = new Date((jd - 2440587.5) * 86400000);
+  return isNaN(d) ? "" : d.toISOString().replace("T", " ").slice(0, 16) + " UT";
+};
+function showDates() {
+  for (const [inp, out] of [["minjd","mindate"],["maxjd","maxdate"]]) {
+    const v = parseFloat($(inp).value);
+    $(out).textContent = isFinite(v) ? jdToISO(v) : "";
+  }
+}
+$("minjd").oninput = $("maxjd").oninput = showDates;
+document.querySelectorAll("[data-days]").forEach(b => b.onclick = () => {
+  const days = +b.dataset.days;
+  if (!days) { $("minjd").value = ""; $("maxjd").value = ""; }
+  else {
+    const now = jdNow();
+    $("maxjd").value = now.toFixed(1);
+    $("minjd").value = (now - days).toFixed(1);
+  }
+  showDates();
+});
+
+["optFainter", "optDiscrepant", "optErr"].forEach(id => $(id).onchange = () => obs.length && plot());
+
+// ---------- Phase folding ----------
+const xMode = () => document.querySelector("input[name=xmode]:checked").value;
+let phaseStar = null;   // star whose P/E are currently in the fields
+
+function getEphemeris() {
+  const P = parseFloat($("period").value), E = parseFloat($("epoch").value);
+  return { P, E, ok: isFinite(P) && P > 0 && isFinite(E) };
+}
+
+// Fill P and E from VSX; if VSX has P but no epoch, use the brightest observation.
+function fillEphemerisFromVsx() {
+  const P = starMeta ? parseFloat(starMeta.period) : NaN;
+  let E = starMeta ? parseFloat(starMeta.epoch) : NaN;
+  let src = "VSX";
+  if (isFinite(P) && !isFinite(E) && obs.length) {
+    let best = null;
+    for (const o of obs) if (!o.fainter && (!best || o.mag < best.mag)) best = o;
+    if (best) { E = tOf(best); src = "VSX (P); E = brightest observation"; }
+  }
+  if (isFinite(P)) $("period").value = P;
+  if (isFinite(E)) $("epoch").value = E;
+  phaseStar = starMeta ? starMeta.name : null;
+  updatePhaseHint(isFinite(P) ? src : null);
+}
+
+function updatePhaseHint(src) {
+  const { P, E, ok } = getEphemeris();
+  $("phaseBox").className = xMode() === "phase" ? "" : "off";
+  $("epochLabel").textContent = `Epoch, ${timeLabel()}`;
+  let h;
+  if (!ok) h = "Enter a period (> 0) and an epoch.";
+  else h = `Phase = frac((${timeLabel()} − ${E}) / ${P})`;
+  if (src) h += `\nSource: ${src}.`;
+  else if (starMeta && !starMeta.period) h += "\nVSX has no period for this star.";
+  if (ok && !useHJD() && starMeta && starMeta.epoch)
+    h += "\nVSX epochs are usually given in HJD: enable HJD for accurate folding.";
+  $("phaseHint").textContent = h;
+  $("phaseHint").style.whiteSpace = "pre-line";
+}
+
+document.querySelectorAll("input[name=xmode]").forEach(r => r.onchange = () => { updatePhaseHint(); obs.length && plot(); });
+["period", "epoch"].forEach(id => $(id).oninput = () => { updatePhaseHint(); if (obs.length && xMode() === "phase") plot(); });
+$("phrange").onchange = () => obs.length && xMode() === "phase" && plot();
+$("useVsx").onclick = () => { fillEphemerisFromVsx(); obs.length && plot(); };
+
+// ---------- JD -> HJD (port of VStar's J2000HJDConverter, Meeus ch. 24) ----------
+const HJD = (() => {
+  const rad = Math.PI / 180, secs = s => s / 3600 * rad;
+  const degsInRange = n => n - Math.floor(n / 360) * 360;
+  const radsInRange = n => n - Math.floor(n / (2 * Math.PI)) * 2 * Math.PI;
+  function jdToYear(jd) {                      // Meeus ch. 7
+    const Z = Math.floor(jd + 0.5), F = jd + 0.5 - Z;
+    let A = Z;
+    if (Z >= 2299161) { const a = Math.floor((Z - 1867216.25) / 36524.25); A = Z + 1 + a - Math.floor(a / 4); }
+    const B = A + 1524, C = Math.floor((B - 122.1) / 365.25), D = Math.floor(365.25 * C);
+    const E = Math.floor((B - D) / 30.6001);
+    const month = E < 14 ? E - 1 : E - 13;
+    return month > 2 ? C - 4716 : C - 4715;
+  }
+  const omegaOf = T => (125.04452 - 1934.136261 * T + 0.0020708 * T * T + T * T * T / 450000) * rad;
+  function obliquity(T) {
+    const U = T / 100, L = (280.4665 + 36000.7698 * T) * rad, Lp = (218.3165 + 481267.8813 * T) * rad, om = omegaOf(T);
+    const eps0 = (23 + 26 / 60 + 21.448 / 3600) * rad
+      - secs(4680.93 * U) - secs(1.55 * U ** 2) + secs(1999.25 * U ** 3) - secs(51.38 * U ** 4)
+      - secs(249.67 * U ** 5) - secs(39.05 * U ** 6) + secs(7.12 * U ** 7) + secs(27.87 * U ** 8)
+      + secs(5.79 * U ** 9) + secs(2.45 * U ** 10);
+    const dEps = secs(9.2) * Math.cos(om) + secs(0.57) * Math.cos(2 * L) + secs(0.1) * Math.cos(2 * Lp) - secs(0.09) * Math.cos(2 * om);
+    return eps0 + dEps;
+  }
+  // raDeg, decDeg: J2000 coordinates of the target in degrees.
+  function convert(jd, raDeg, decDeg) {
+    const T = (jd - 2451545.0) / 36525.0;
+    const year = jdToYear(jd);
+    const Lo = degsInRange(280.46645 + 36000.76983 * T + 0.0003032 * T * T) * rad;
+    const M = radsInRange((357.52910 + 35999.05030 * T - 0.0001559 * T * T - 0.00000048 * T ** 3) * rad);
+    const C = (1.914600 - 0.004817 * T - 0.000014 * T * T) * rad * Math.sin(M)
+            + (0.019993 - 0.000101 * T) * rad * Math.sin(2 * M) + 0.000290 * rad * Math.sin(3 * M);
+    const lon2000 = Lo + C - 0.01397 * rad * (year - 2000.0);
+    const eps = obliquity(T);
+    const sunRA = Math.atan2(Math.cos(eps) * Math.sin(lon2000), Math.cos(lon2000));
+    const sunDec = Math.asin(Math.sin(eps) * Math.sin(lon2000));
+    const e = 0.016708617 - 0.000042037 * T - 0.0000001236 * T * T;
+    const R = 1.000001018 * (1 - e * e) / (1 + e * Math.cos(M + C));   // AU
+    const c = 173.144632674240;                                       // AU/day
+    const ra = raDeg * rad, dec = decDeg * rad;
+    return jd - (R / c) * (Math.sin(dec) * Math.sin(sunDec) + Math.cos(dec) * Math.cos(sunDec) * Math.cos(ra - sunRA));
+  }
+  return { convert };
+})();
+
+function getCoords() {
+  const ra = parseFloat($("ra").value), dec = parseFloat($("dec").value);
+  return { ra, dec, ok: isFinite(ra) && ra >= 0 && ra <= 360 && isFinite(dec) && Math.abs(dec) <= 90 };
+}
+const useHJD = () => $("optHJD").checked && getCoords().ok;
+const timeLabel = () => useHJD() ? "HJD" : "JD";
+
+// Observation time used for plotting/folding: JD, or HJD (cached per coordinates).
+function tOf(o) {
+  if (!useHJD()) return o.jd;
+  const { ra, dec } = getCoords(), key = ra + "," + dec;
+  if (o.hjdKey !== key) { o.hjd = HJD.convert(o.jd, ra, dec); o.hjdKey = key; }
+  return o.hjd;
+}
+
+function fillCoordsFromVsx() {
+  const ra = starMeta ? parseFloat(starMeta.ra) : NaN, dec = starMeta ? parseFloat(starMeta.dec) : NaN;
+  $("ra").value = isFinite(ra) ? ra : "";
+  $("dec").value = isFinite(dec) ? dec : "";
+  updateHjdHint();
+}
+
+function updateHjdHint() {
+  const on = $("optHJD").checked, c = getCoords();
+  $("hjdBox").className = on ? "" : "off";
+  let h = "HJD = JD − (R/c)·cos θ (Meeus, ch. 24; as in VStar).";
+  if (on && !c.ok) h = "Enter RA and Dec (J2000) in degrees.";
+  else if (on && obs.length) {
+    let lo = Infinity, hi = -Infinity;
+    for (const o of obs) { const d = (tOf(o) - o.jd) * 1440; if (d < lo) lo = d; if (d > hi) hi = d; }
+    h += `\nCorrection for these data: ${lo.toFixed(2)} to ${hi.toFixed(2)} min.`;
+  }
+  $("hjdHint").textContent = h;
+}
+
+function onTimeSystemChange() { updateHjdHint(); updatePhaseHint(); obs.length && plot(); }
+$("optHJD").onchange = onTimeSystemChange;
+["ra", "dec"].forEach(id => $(id).oninput = onTimeSystemChange);
+updatePhaseHint();
+updateHjdHint();
+
+function setStatus(msg, isErr = false) {
+  $("status").textContent = msg;
+  $("status").className = isErr ? "err" : "";
+}
+
+// ---------- VSX API ----------
+function apiUrl(params) {
+  const base = $("api").value.trim();
+  const qs = Object.entries(params)
+    .map(([k, v]) => v === true ? k : `${k}=${encodeURIComponent(v)}`)
+    .join("&");
+  return base + (base.includes("?") ? "&" : "?") + qs;
+}
+
+async function fetchXml(params) {
+  const url = apiUrl({ view: "api.object", ...params });
+  let resp;
+  try {
+    resp = await fetch(url, { signal: abortCtl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
+    throw new Error(
+      "The request to VSX failed.\n" +
+      "Most likely the browser blocked it (CORS), or there is no network connection.\n" +
+      "Fix: run “python aavso_proxy.py” and open http://localhost:8765/");
+  }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  const text = await resp.text();
+  const doc = new DOMParser().parseFromString(text, "text/xml");
+  if (doc.querySelector("parsererror")) throw new Error("VSX response is not valid XML:\n" + text.slice(0, 300));
+  return doc;
+}
+
+const childText = (el, tag) => {
+  const n = el && el.getElementsByTagName(tag)[0];
+  return n ? n.textContent.trim() : "";
+};
+
+// CSV parser that handles quoted fields with commas/quotes/newlines.
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else q = false;
+      } else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.length > 1 || row[0] !== "") rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function rowsToObs(rows) {
+  if (!rows.length) return [];
+  const hdr = rows[0].map(h => h.trim().toLowerCase());
+  const idx = name => hdr.indexOf(name.toLowerCase());
+  const I = {
+    jd: idx("JD"), mag: idx("mag"), err: idx("uncert"), band: idx("band"),
+    by: idx("by"), ft: idx("fainterThan"), val: idx("val"), comment: idx("comment"),
+    obsType: idx("obsType"), id: idx("obsID"),
+  };
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const f = rows[r];
+    const jd = parseFloat(f[I.jd]);
+    const mag = parseFloat(f[I.mag]);      // "12.3:" -> 12.3
+    if (!isFinite(jd) || !isFinite(mag)) continue;
+    const err = I.err >= 0 ? parseFloat(f[I.err]) : NaN;
+    out.push({
+      id: I.id >= 0 ? f[I.id] : "",
+      jd, mag,
+      err: isFinite(err) ? err : 0,
+      band: I.band >= 0 ? f[I.band] : "",
+      by: I.by >= 0 ? f[I.by] : "",
+      fainter: I.ft >= 0 && f[I.ft] === "1",
+      val: I.val >= 0 ? f[I.val] : "",
+      obsType: I.obsType >= 0 ? f[I.obsType] : "",
+      comment: I.comment >= 0 ? f[I.comment] : "",
+    });
+  }
+  return out;
+}
+
+async function load() {
+  const name = $("star").value.trim();
+  if (!name) return;
+  const bands = bandBoxes().filter(b => b.checked).map(b => b.value);
+  if (!bands.length) { setStatus("Select at least one band.", true); return; }
+  const minjd = parseFloat($("minjd").value), maxjd = parseFloat($("maxjd").value);
+  if (isFinite(minjd) !== isFinite(maxjd)) { setStatus("Enter both JDs or leave both empty.", true); return; }
+  if (isFinite(minjd) && minjd >= maxjd) { setStatus("Minimum JD must be less than Maximum JD.", true); return; }
+  const pageSize = Math.max(100, Math.min(50000, parseInt($("pagesize").value) || 10000));
+
+  abortCtl = new AbortController();
+  $("load").disabled = true; $("stop").disabled = false; $("csv").disabled = true;
+  obs = []; starMeta = null;
+  Plotly.purge("plot");
+
+  try {
+    // 1. Resolve the star in VSX.
+    setStatus(`Looking up “${name}” in VSX…`);
+    const infoDoc = await fetchXml({ ident: name });
+    const vo = infoDoc.getElementsByTagName("VSXObject")[0];
+    const auid = childText(vo, "AUID");
+    if (!vo || (!auid && !childText(vo, "Name"))) throw new Error(`Star “${name}” not found in VSX.`);
+    starMeta = {
+      name: childText(vo, "Name") || name, auid,
+      type: childText(vo, "VariabilityType"), period: childText(vo, "Period"), epoch: childText(vo, "Epoch"),
+      spec: childText(vo, "SpectralType"), ra: childText(vo, "RA2000"), dec: childText(vo, "Declination2000"),
+    };
+    showInfo();
+    const newStar = phaseStar !== starMeta.name;
+    if (newStar) { fillCoordsFromVsx(); fillEphemerisFromVsx(); }
+    if (!auid) throw new Error(`“${starMeta.name}” is in VSX but has no AUID, so there are no AID data.`);
+
+    // 2. Page through the observations.
+    const params = { ident: auid, data: pageSize, csv: true, band: bands.join(","), mtype: "std" };
+    if (isFinite(minjd)) { params.fromjd = minjd; params.tojd = maxjd; }
+
+    let total = null;
+    for (let page = 1; page <= 10000; page++) {
+      setStatus(`Loading: page ${page}, ${obs.length} received` + (total != null ? ` of ${total}` : "") + "…");
+      const doc = await fetchXml({ ...params, page });
+      const cnt = childText(doc, "Count");
+      if (cnt !== "" && total == null) total = parseInt(cnt);
+      const dataEl = doc.getElementsByTagName("Data")[0];
+      if (!dataEl) break;
+      const chunk = rowsToObs(parseCSV(dataEl.textContent));
+      if (!chunk.length) break;
+      obs.push(...chunk);
+      if (cnt === "" || (total != null && obs.length >= total)) break;
+      if (page === 1 || page % 3 === 0) plot();
+    }
+    if (newStar && !getEphemeris().ok) fillEphemerisFromVsx();   // epoch fallback needs data
+    updateHjdHint();
+
+    if (!obs.length) {
+      setStatus("No observations found for these parameters.");
+    } else {
+      setStatus(`Done: ${obs.length} observations.`);
+      $("csv").disabled = false;
+    }
+    plot();
+  } catch (e) {
+    if (e.name === "AbortError") {
+      setStatus(`Stopped. ${obs.length} observations received.`);
+      if (obs.length) { $("csv").disabled = false; plot(); }
+    } else {
+      setStatus(e.message, true);
+      if (obs.length) plot();
+    }
+  } finally {
+    $("load").disabled = false; $("stop").disabled = true;
+  }
+}
+
+function showInfo() {
+  const m = starMeta;
+  const parts = [`<b>${m.name}</b>`];
+  if (m.auid) parts.push(`AUID ${m.auid}`);
+  if (m.type) parts.push(`type ${m.type}`);
+  if (m.period) parts.push(`P = ${m.period} d`);
+  if (m.epoch) parts.push(`E = ${m.epoch}`);
+  if (m.spec) parts.push(`Sp ${m.spec}`);
+  if (m.ra) parts.push(`RA ${m.ra}°, Dec ${m.dec}°`);
+  $("info").innerHTML = parts.join(" · ");
+}
+
+// ---------- Plot ----------
+function plot() {
+  const showFt = $("optFainter").checked, showDisc = $("optDiscrepant").checked, showErr = $("optErr").checked;
+  const eph = getEphemeris();
+  const phaseMode = xMode() === "phase" && eph.ok;
+  const phStart = parseFloat($("phrange").value);
+  const hjdOn = useHJD();
+
+  const groups = new Map();
+  for (const o of obs) {
+    const disc = o.val === "D" || o.val === "T";
+    if (disc && !showDisc) continue;
+    if (o.fainter && !showFt) continue;
+    const key = o.band + (o.fainter ? " (fainter than)" : "") + (disc ? " (discrepant)" : "");
+    if (!groups.has(key)) groups.set(key, { band: o.band, fainter: o.fainter, disc, pts: [] });
+    groups.get(key).pts.push(o);
+  }
+
+  // Each point -> one or two x positions (standard phase, and previous cycle if in range).
+  const expand = pts => {
+    if (!phaseMode) return pts.map(p => ({ p, x: tOf(p) }));
+    const out = [];
+    for (const p of pts) {
+      const c = (tOf(p) - eph.E) / eph.P;
+      const ph = c - Math.floor(c);                 // standard phase, [0, 1)
+      out.push({ p, x: ph, cyc: Math.floor(c) });
+      if (ph - 1 >= phStart) out.push({ p, x: ph - 1, cyc: Math.floor(c) });
+    }
+    return out;
+  };
+
+  const order = b => { const i = BANDS.findIndex(x => x[0] === b); return i < 0 ? 999 : i; };
+  const traces = [...groups.entries()]
+    .sort((a, b) => order(a[1].band) - order(b[1].band) || a[1].fainter - b[1].fainter || a[1].disc - b[1].disc)
+    .map(([key, g]) => {
+      const color = bandColor[g.band] || "#888";
+      const hasErr = showErr && !g.fainter && g.pts.some(p => p.err > 0);
+      const e = expand(g.pts);
+      return {
+        type: "scattergl", mode: "markers", name: `${key} (${g.pts.length})`,
+        x: e.map(q => q.x), y: e.map(q => q.p.mag),
+        error_y: hasErr ? { type: "data", array: e.map(q => q.p.err), visible: true, thickness: 1, width: 0, color } : undefined,
+        marker: {
+          size: g.fainter ? 7 : 5,
+          symbol: g.fainter ? "triangle-down-open" : (g.disc ? "x" : "circle"),
+          color, opacity: g.fainter || g.disc ? 0.55 : 0.85,
+        },
+        customdata: e.map(q => [jdToISO(q.p.jd), q.p.by, q.p.err ? "±" + q.p.err : "", q.p.obsType, q.p.comment,
+                                q.p.jd.toFixed(5), q.cyc ?? "", hjdOn ? tOf(q.p).toFixed(5) : ""]),
+        hovertemplate:
+          (phaseMode ? "φ %{x:.4f} (E%{customdata[6]})<br>JD %{customdata[5]}<br>" + (hjdOn ? "HJD %{customdata[7]}<br>" : "")
+                     : (hjdOn ? "HJD %{x:.5f}<br>JD %{customdata[5]}<br>" : "JD %{x:.5f}<br>")) +
+          "%{customdata[0]}<br>" +
+          (g.fainter ? "&lt;" : "") + "%{y:.3f} %{customdata[2]}<br>" +
+          "obs: %{customdata[1]} %{customdata[3]}<br>%{customdata[4]}<extra>" + g.band + "</extra>",
+      };
+    });
+
+  const name = starMeta ? starMeta.name : "";
+  const title = phaseMode ? `${name}  ·  P = ${eph.P} d, E = ${hjdOn ? "HJD" : "JD"} ${eph.E}` : name;
+  const xaxis = phaseMode
+    ? { title: "Phase", range: [phStart, 1], tickformat: phStart < -0.5 ? ".1f" : ".2f", dtick: phStart < -0.5 ? 0.2 : 0.1, zeroline: false }
+    : { title: hjdOn ? "HJD" : "JD", tickformat: ".1f", exponentformat: "none", zeroline: false };
+  Plotly.react("plot", traces, {
+    title: { text: title, font: { size: 15 } },
+    margin: { l: 60, r: 20, t: 40, b: 50 },
+    xaxis,
+    yaxis: { title: "Magnitude", autorange: "reversed", zeroline: false },
+    legend: { orientation: "h", y: -0.15 },
+    hovermode: "closest",
+    // Keep zoom while P/E are tweaked; reset when star, mode or phase range changes.
+    uirevision: `${name}|${phaseMode}|${phaseMode ? phStart : ""}`,
+  }, { responsive: true, displaylogo: false,
+       toImageButtonOptions: { filename: (name || "lightcurve").replace(/\s+/g, "_") + (phaseMode ? "_phase" : "") } });
+}
+
+// ---------- Export ----------
+function exportCSV() {
+  const esc = v => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  const eph = getEphemeris();
+  const hjdOn = useHJD();
+  const phase = o => { const c = (tOf(o) - eph.E) / eph.P; return (c - Math.floor(c)).toFixed(6); };
+  const lines = ["JD,mag,uncert,band,by,fainterThan,val,obsType,obsID,comment" + (hjdOn ? ",HJD" : "") + (eph.ok ? ",phase" : "")];
+  for (const o of obs)
+    lines.push([o.jd, o.mag, o.err, o.band, o.by, o.fainter ? 1 : 0, o.val, o.obsType, o.id, o.comment,
+                ...(hjdOn ? [tOf(o).toFixed(6)] : []), ...(eph.ok ? [phase(o)] : [])].map(esc).join(","));
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(starMeta?.name || "aavso").replace(/\s+/g, "_")}_aid.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$("form").onsubmit = e => { e.preventDefault(); load(); };
+$("stop").onclick = () => abortCtl && abortCtl.abort();
+$("csv").onclick = exportCSV;
+</script>
+</body>
+</html>
