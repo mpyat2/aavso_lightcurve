@@ -15,7 +15,9 @@ Database" observation source, with the same request parameters and paging.
 |------|---------|
 | `aavso_lightcurve_en.html` | The application, English interface |
 | `aavso_lightcurve.html` | The same application, Ukrainian interface |
-| `aavso_proxy.py` | Optional local server/proxy (Python standard library only) |
+| `aavso_proxy.py` | Page server + CORS proxy for VSX; runs locally or on Cloud Run (Python standard library only) |
+| `Dockerfile`, `.dockerignore` | Container for deploying `aavso_proxy.py` with the pages to Google Cloud Run |
+| `cloudflare_worker.js` | Alternative CORS proxy as a Cloudflare Worker |
 | `README.md` | This description |
 
 Keep all files in the same folder.
@@ -34,17 +36,88 @@ The browser opens automatically:
 
 Stop the server with **Ctrl+C**.
 
-### Without the proxy
+When run on your computer the proxy listens on `127.0.0.1` only. In every
+mode it forwards only `view=api.object` requests to VSX.
 
-You can also open the HTML file directly (double-click). The page then calls
-`https://vsx.aavso.org/index.php` from the browser. If AAVSO does not send
-CORS headers allowing this, the browser blocks the request and the page
-shows an error suggesting the proxy. `aavso_proxy.py` avoids the problem:
-it serves the page and forwards `/vsx?…` requests to VSX from Python, where
-CORS does not apply.
+## Which endpoint the page uses (and when a proxy is needed)
 
-The proxy listens on `127.0.0.1` only and forwards only `view=api.object`
-requests.
+Browsers allow a page to read data from another site only if that site
+sends CORS headers. `vsx.aavso.org` currently does (confirmed with the page
+hosted on a free static web host), so the page normally talks to VSX
+**directly**, whether it is opened as a file or served from any web host.
+A proxy (`aavso_proxy.py`, Cloud Run, Cloudflare Worker) is only a fallback
+in case direct requests are ever blocked.
+
+The page picks its **API endpoint** in this order:
+
+1. `?api=URL` in the page address, e.g.
+   `…/aavso_lightcurve_en.html?api=https://my-proxy.example/vsx`;
+2. a URL typed into **Connection → API endpoint** (saved in this browser;
+   **Auto** forgets it);
+3. `CONFIG_API` set in the HTML file (see below);
+4. `/vsx`, if the page is served by `aavso_proxy.py` (detected via
+   `/vsx/ping`);
+5. otherwise `https://vsx.aavso.org/index.php` directly.
+
+The line under the field shows which rule was used, and **Test** checks the
+endpoint with a small request. A saved relative endpoint such as `/vsx` is
+ignored when the server has no proxy, and if any non-direct endpoint fails
+during loading, the page automatically switches to direct VSX and says so.
+
+## Hosting the page on a web server
+
+Just upload `aavso_lightcurve_en.html` and/or `aavso_lightcurve.html` to any
+static web host; nothing else is needed. If a browser shows an old endpoint
+after an update, reload with **Ctrl+F5** or press **Auto** under Connection.
+
+### Optional: your own proxy
+
+Only needed if direct requests to VSX stop working. Free hosts often block
+outgoing connections from PHP/CGI, so put the proxy elsewhere:
+
+1. Deploy a proxy: Google Cloud Run (A) or a Cloudflare Worker (B).
+2. In the HTML file(s), near the top of the `<script>`, set
+
+   ```js
+   const CONFIG_API = "https://<your-proxy>/vsx";
+   ```
+
+3. Upload the HTML file(s) to the host. Every visitor then uses your proxy
+   automatically.
+
+Without step 2 you can still pass `?api=…` in the link or type the URL in
+the Connection field.
+
+#### A. Google Cloud Run
+
+From the folder with the files (needs the `gcloud` CLI and a project with
+billing enabled; light use stays within the free tier):
+
+```bash
+gcloud run deploy aavso-lightcurve \
+    --source . \
+    --project <PROJECT_ID> --region europe-west1 \
+    --allow-unauthenticated --max-instances 2
+```
+
+Cloud Build builds the image from `Dockerfile`; the proxy listens on
+`$PORT`. The command prints the service URL, e.g.
+`https://aavso-lightcurve-xxxxxxxxxx.europe-west1.run.app`. Then:
+
+- `https://…run.app/` and `…/uk` serve the pages themselves (no other host
+  needed);
+- `https://…run.app/vsx` is the endpoint for `CONFIG_API` on other hosts;
+- `https://…run.app/vsx/ping` should answer `aavso_proxy v4`.
+
+#### B. Cloudflare Worker
+
+Free plan, no server to maintain:
+
+1. <https://dash.cloudflare.com> → **Workers & Pages** → **Create** →
+   *Hello World* worker; give it a name.
+2. **Edit code**, replace everything with `cloudflare_worker.js`, **Deploy**.
+3. The endpoint is `https://<name>.<account>.workers.dev/vsx`;
+   `…/vsx/ping` should answer `aavso_proxy worker`.
 
 ## Using the page
 
@@ -158,9 +231,9 @@ period and epoch are set, a `phase` column (0 … 1) is added.
 
 Under **Connection**:
 
-- **API endpoint**: `/vsx` when the page is served by `aavso_proxy.py`,
-  `https://vsx.aavso.org/index.php` when opened as a file. Can be changed
-  manually.
+- **API endpoint**: chosen automatically (see *Why a proxy, and which
+  endpoint the page uses*); can be overridden. **Test** checks it, **Auto**
+  returns to automatic selection.
 - **Observations per request page**: 100–50 000 (VStar uses 50 000).
 
 ## How it works
@@ -185,8 +258,8 @@ Only standardised magnitudes (`mtype=std`) are requested, as in VStar.
 ## Requirements
 
 - A modern browser (Chrome, Firefox, Edge, Safari).
-- Internet access to `vsx.aavso.org` and to `cdn.plot.ly`, which hosts the
-  plotting library.
+- Internet access to `vsx.aavso.org` (directly or via a proxy) and to
+  `cdn.plot.ly`, which hosts the plotting library.
 - Python 3.7+ for `aavso_proxy.py` (no third-party packages).
 
 ## Notes and limitations

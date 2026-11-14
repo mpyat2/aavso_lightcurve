@@ -143,13 +143,20 @@
       </div>
       <div id="status"></div>
 
-      <details>
+      <details id="connBox">
         <summary>З'єднання</summary>
         <label for="api">API endpoint</label>
-        <input type="text" id="api">
-        <div class="hint">Якщо сторінку відкрито напряму як файл і браузер блокує запит (CORS),
-        запустіть <code>python aavso_proxy.py</code> і відкрийте http://localhost:8765/uk.
-        Тоді endpoint буде <code>/vsx</code>.</div>
+        <input type="text" id="api" spellcheck="false" autocomplete="off">
+        <div class="hint" id="apiSource"></div>
+        <div class="btns">
+          <button type="button" class="small" id="apiTest">Перевірити</button>
+          <button type="button" class="small" id="apiAuto">Авто</button>
+        </div>
+        <div class="hint" id="apiTestResult" style="white-space:pre-line"></div>
+        <div class="hint">Варіанти: <code>https://vsx.aavso.org/index.php</code> (напряму, за замовчуванням);
+        <code>/vsx</code> (сторінку віддає <code>aavso_proxy.py</code>);
+        або URL вашого проксі в інтернеті, напр. <code>https://….run.app/vsx</code>
+        (див. README). Можна також передати <code>?api=URL</code> в адресі сторінки.</div>
         <label for="pagesize">Спостережень на сторінку запиту</label>
         <input type="number" id="pagesize" value="10000" min="100" max="50000">
       </details>
@@ -163,6 +170,15 @@
 
 <script>
 "use strict";
+
+// ===== Settings for hosting this page on a web server =====
+// URL of your CORS proxy for VSX (aavso_proxy.py on Cloud Run, or the
+// Cloudflare Worker from README), e.g. "https://aavso-proxy-xxxx.run.app/vsx".
+// Leave empty to auto-detect: aavso_proxy.py serving the page, otherwise direct
+// VSX (AAVSO allows cross-origin requests, so no proxy is normally needed).
+const CONFIG_API = "";
+// ==========================================================
+const VSX_DIRECT = "https://vsx.aavso.org/index.php";
 
 // Band short names (AID "band" values) and colours, as in VStar's SeriesType.
 const BANDS = [
@@ -232,7 +248,57 @@ $("bandsAll").onclick = () => bandBoxes().forEach(b => b.checked = true);
 $("bandsNone").onclick = () => bandBoxes().forEach(b => b.checked = false);
 $("bandsCommon").onclick = () => bandBoxes().forEach(b => b.checked = COMMON.includes(b.value));
 
-$("api").value = location.protocol === "file:" ? "https://vsx.aavso.org/index.php" : "/vsx";
+// ---------- API endpoint selection ----------
+// Priority: ?api=URL  >  value entered by the user (saved)  >  CONFIG_API
+//           >  aavso_proxy.py serving this page (/vsx)  >  direct VSX.
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
+};
+function setApi(url, source) {
+  $("api").value = url;
+  $("apiSource").textContent = "Джерело: " + source;
+}
+async function localProxyAvailable() {
+  if (location.protocol === "file:") return false;
+  try {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch("/vsx/ping", { signal: ctl.signal, cache: "no-store" });
+    clearTimeout(timer);
+    return r.ok && (await r.text()).startsWith("aavso_proxy");
+  } catch { return false; }
+}
+async function chooseApi(ignoreSaved = false) {
+  const qp = new URLSearchParams(location.search).get("api");
+  const saved = store.get("aavsoLcApi");
+  if (qp) return setApi(qp, "параметр ?api= в адресі сторінки");
+  if (saved && !ignoreSaved) {
+    // A relative URL (e.g. "/vsx") only makes sense if this server runs the proxy.
+    if (!saved.startsWith("/") || await localProxyAvailable())
+      return setApi(saved, "введено вручну (збережено в браузері)");
+    store.set("aavsoLcApi", null);
+  }
+  if (CONFIG_API) return setApi(CONFIG_API, "CONFIG_API у файлі сторінки");
+  setApi(VSX_DIRECT, "перевірка…");
+  if (await localProxyAvailable()) return setApi("/vsx", "aavso_proxy.py, що віддає цю сторінку");
+  setApi(VSX_DIRECT, "напряму до AAVSO (проксі не знайдено)");
+}
+$("api").onchange = () => {
+  const v = $("api").value.trim();
+  store.set("aavsoLcApi", v || null);
+  if (v) $("apiSource").textContent = "Джерело: введено вручну (збережено в браузері)";
+  else chooseApi(true);
+};
+$("apiAuto").onclick = () => { store.set("aavsoLcApi", null); $("apiTestResult").textContent = ""; chooseApi(true); };
+$("apiTest").onclick = async () => {
+  $("apiTestResult").textContent = "Перевірка…";
+  try {
+    const doc = await fetchXmlFrom($("api").value.trim() || VSX_DIRECT, { ident: "SS Cyg" }, new AbortController().signal);
+    const name = childText(doc.getElementsByTagName("VSXObject")[0], "Name");
+    $("apiTestResult").textContent = name ? `OK: VSX відповідає (${name}).` : "Відповідь отримано, але без даних про зорю.";
+  } catch (e) { $("apiTestResult").textContent = e.message; }
+};
+chooseApi();
 
 // JD <-> calendar date
 const jdNow = () => Date.now() / 86400000 + 2440587.5;
@@ -397,31 +463,57 @@ function setStatus(msg, isErr = false) {
 }
 
 // ---------- VSX API ----------
-function apiUrl(params) {
-  const base = $("api").value.trim();
+function apiUrl(params, base = $("api").value.trim()) {
   const qs = Object.entries(params)
     .map(([k, v]) => v === true ? k : `${k}=${encodeURIComponent(v)}`)
     .join("&");
   return base + (base.includes("?") ? "&" : "?") + qs;
 }
 
-async function fetchXml(params) {
-  const url = apiUrl({ view: "api.object", ...params });
+// One request to `base`; throws Error with .netErr=true for network/HTTP/XML failures.
+async function fetchXmlFrom(base, params, signal) {
+  const url = apiUrl({ view: "api.object", ...params }, base);
   let resp;
   try {
-    resp = await fetch(url, { signal: abortCtl.signal });
+    resp = await fetch(url, { signal });
   } catch (e) {
     if (e.name === "AbortError") throw e;
-    throw new Error(
-      "Не вдалося виконати запит до VSX.\n" +
-      "Найімовірніше, браузер заблокував його (CORS) або немає мережі.\n" +
-      "Рішення: запустіть «python aavso_proxy.py» і відкрийте http://localhost:8765/uk");
+    throw Object.assign(new Error(base === VSX_DIRECT
+      ? "Браузер не зміг отримати дані з vsx.aavso.org.\n" +
+        "Перевірте з'єднання з інтернетом і чи відкривається https://vsx.aavso.org.\n" +
+        "Якщо сайт доступний, а запит блокується, можна використати проксі (див. README)."
+      : `Не вдалося з'єднатися з ${base}.`), { netErr: true });
   }
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  if (!resp.ok)
+    throw Object.assign(new Error(`HTTP ${resp.status} ${resp.statusText} від ${base}`), { netErr: true });
   const text = await resp.text();
   const doc = new DOMParser().parseFromString(text, "text/xml");
-  if (doc.querySelector("parsererror")) throw new Error("Відповідь VSX не є коректним XML:\n" + text.slice(0, 300));
+  if (doc.querySelector("parsererror"))
+    throw Object.assign(new Error(`Відповідь від ${base} не є коректним XML:\n` + text.slice(0, 300)), { netErr: true });
   return doc;
+}
+
+// Request via the current endpoint; if a non-direct endpoint fails, fall back to direct VSX.
+async function fetchXml(params, signal = abortCtl.signal) {
+  const base = $("api").value.trim() || VSX_DIRECT;
+  try {
+    return await fetchXmlFrom(base, params, signal);
+  } catch (e) {
+    if (!e.netErr || base === VSX_DIRECT) {
+      if (e.netErr) $("connBox").open = true;
+      throw e;
+    }
+    let doc;
+    try { doc = await fetchXmlFrom(VSX_DIRECT, params, signal); }
+    catch (e2) {
+      if (e2.name === "AbortError") throw e2;
+      $("connBox").open = true;
+      throw new Error(e.message + "\n" + e2.message);
+    }
+    if (store.get("aavsoLcApi") === base) store.set("aavsoLcApi", null);
+    setApi(VSX_DIRECT, `напряму до AAVSO (автоматично: ${base} не відповідає)`);
+    return doc;
+  }
 }
 
 const childText = (el, tag) => {
