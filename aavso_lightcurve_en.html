@@ -487,10 +487,42 @@ async function fetchXmlFrom(base, params, signal) {
   if (!resp.ok)
     throw Object.assign(new Error(`HTTP ${resp.status} ${resp.statusText} from ${base}`), { netErr: true });
   const text = await resp.text();
-  const doc = new DOMParser().parseFromString(text, "text/xml");
-  if (doc.querySelector("parsererror"))
+  const doc = parseVsxXml(text);
+  if (!doc)
     throw Object.assign(new Error(`Response from ${base} is not valid XML:\n` + text.slice(0, 300)), { netErr: true });
   return doc;
+}
+
+// AID data sometimes contain control characters (e.g. in observer comments),
+// which are illegal in XML. Like VStar's UTF8FilteringInputStream, replace
+// them with spaces (keeping TAB, LF, CR). If the XML is still malformed,
+// fall back to extracting the elements we need with regular expressions.
+const VSX_FIELDS = ["Name", "AUID", "RA2000", "Declination2000", "VariabilityType",
+                    "Period", "Epoch", "SpectralType"];
+function parseVsxXml(text) {
+  const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, " ");
+  const doc = new DOMParser().parseFromString(clean, "text/xml");
+  if (!doc.querySelector("parsererror")) return doc;
+
+  const grab = tag => {
+    const m = clean.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+    if (!m) return null;
+    const cd = m[1].match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/);
+    return cd ? cd[1] : m[1];
+  };
+  if (!/<VSXObject[\s>]/.test(clean)) return null;
+  const out = document.implementation.createDocument(null, "VSXObjects", null);
+  const vo = out.createElement("VSXObject");
+  out.documentElement.appendChild(vo);
+  for (const f of VSX_FIELDS) {
+    const v = grab(f);
+    if (v != null) { const el = out.createElement(f); el.textContent = v; vo.appendChild(el); }
+  }
+  for (const f of ["Count", "Data"]) {
+    const v = grab(f);
+    if (v != null) { const el = out.createElement(f); el.textContent = v; out.documentElement.appendChild(el); }
+  }
+  return out;
 }
 
 // Request via the current endpoint; if a non-direct endpoint fails, fall back to direct VSX.
