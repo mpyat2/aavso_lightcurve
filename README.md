@@ -126,9 +126,11 @@ Free plan, no server to maintain:
    VSX first; its name, AUID, variability type, period, spectral type and
    coordinates are shown above the plot.
 2. **Minimum JD / Maximum JD**: the time range. The calendar date (UT) is
-   shown under each field. The quick buttons set the last 30 days, 1 year or
-   10 years; **All** clears both fields and downloads the full history. Fill
-   in both fields or leave both empty.
+   shown under each field. By default the page opens with the **last 2
+   years**, so popular stars do not start with a very long download. The
+   quick buttons set the last 30 days, 1 year, 2 years or 10 years (the
+   selected one is highlighted); **All** clears both fields and downloads the
+   full history. Fill in both fields or leave both empty.
 3. **Bands**: select one or more passbands. The list uses AID band codes
    with VStar's colours, e.g.:
 

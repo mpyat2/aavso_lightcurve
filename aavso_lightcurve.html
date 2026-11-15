@@ -25,6 +25,7 @@
   .sw { width:10px; height:10px; border-radius:2px; flex:none; border:1px solid #0002; }
   .btns { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
   button { padding:6px 10px; border:1px solid var(--line); background:#fff; border-radius:5px; font:inherit; cursor:pointer; }
+  button.sel { background:#e8eef8; border-color:var(--accent); color:var(--accent); font-weight:600; }
   button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
   button:disabled { opacity:.5; cursor:default; }
   .small { font-size:12px; padding:3px 7px; }
@@ -69,6 +70,7 @@
       <div class="btns">
         <button type="button" class="small" data-days="30">30 днів</button>
         <button type="button" class="small" data-days="365">1 рік</button>
+        <button type="button" class="small" data-days="731">2 роки</button>
         <button type="button" class="small" data-days="3652">10 років</button>
         <button type="button" class="small" data-days="0">Усі</button>
       </div>
@@ -312,17 +314,23 @@ function showDates() {
     $(out).textContent = isFinite(v) ? jdToISO(v) : "";
   }
 }
-$("minjd").oninput = $("maxjd").oninput = showDates;
-document.querySelectorAll("[data-days]").forEach(b => b.onclick = () => {
-  const days = +b.dataset.days;
+// Range buttons: last N days up to now, or all data (0). The selected one is
+// highlighted; editing a JD field by hand clears the highlight.
+const DEFAULT_DAYS = 731;   // ~2 years
+const rangeButtons = [...document.querySelectorAll("[data-days]")];
+function setRange(days) {
   if (!days) { $("minjd").value = ""; $("maxjd").value = ""; }
   else {
-    const now = jdNow();
-    $("maxjd").value = now.toFixed(1);
-    $("minjd").value = (now - days).toFixed(1);
+    const now = jdNow();   // round outwards so the newest observations are included
+    $("maxjd").value = (Math.ceil(now * 10) / 10).toFixed(1);
+    $("minjd").value = (Math.floor((now - days) * 10) / 10).toFixed(1);
   }
+  rangeButtons.forEach(b => b.classList.toggle("sel", +b.dataset.days === days));
   showDates();
-});
+}
+rangeButtons.forEach(b => b.onclick = () => setRange(+b.dataset.days));
+$("minjd").oninput = $("maxjd").oninput = () => { rangeButtons.forEach(b => b.classList.remove("sel")); showDates(); };
+setRange(DEFAULT_DAYS);
 
 ["optFainter", "optDiscrepant", "optErr"].forEach(id => $(id).onchange = () => obs.length && plot());
 
