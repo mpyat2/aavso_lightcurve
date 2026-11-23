@@ -83,6 +83,10 @@
         <button type="button" class="small" id="bandsCommon">Vis. + V</button>
       </div>
 
+      <label for="obscodes">Observer codes</label>
+      <input type="text" id="obscodes" placeholder="comma-separated; empty = all" spellcheck="false" autocomplete="off">
+      <div class="hint" id="obscodesHint"></div>
+
       <div class="opts">
         <label style="font-weight:600;margin-top:10px">Show</label>
         <label><input type="checkbox" id="optFainter" checked> Fainter-than (▼)</label>
@@ -234,6 +238,7 @@ const $ = id => document.getElementById(id);
 let obs = [];          // loaded observations
 let starMeta = null;   // VSX object info
 let abortCtl = null;
+let loadedObsCodes = [];   // observer codes used for the current data set
 
 // ---------- UI setup ----------
 (function initBands() {
@@ -467,6 +472,17 @@ $("optReduced").onchange = () => obs.length && plot();
 updatePhaseHint();
 updateHjdHint();
 
+// Observer codes: any separators (comma, space, semicolon) -> "CODE1,CODE2".
+// VStar sends them the same way, as &obscode=CODE1,CODE2.
+function getObsCodes() {
+  const codes = $("obscodes").value.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  return [...new Set(codes)];
+}
+$("obscodes").oninput = () => {
+  const c = getObsCodes();
+  $("obscodesHint").textContent = c.length ? `Only: ${c.join(", ")}` : "";
+};
+
 function setStatus(msg, isErr = false) {
   $("status").textContent = msg;
   $("status").className = isErr ? "err" : "";
@@ -626,6 +642,11 @@ async function load() {
   if (isFinite(minjd) !== isFinite(maxjd)) { setStatus("Enter both JDs or leave both empty.", true); return; }
   if (isFinite(minjd) && minjd >= maxjd) { setStatus("Minimum JD must be less than Maximum JD.", true); return; }
   const pageSize = Math.max(100, Math.min(50000, parseInt($("pagesize").value) || 10000));
+  const obsCodes = getObsCodes();
+  const badCode = obsCodes.find(c => !/^[A-Z0-9]+$/.test(c));
+  if (badCode) { setStatus(`Invalid observer code: “${badCode}” (Latin letters and digits only).`, true); return; }
+  const obsNote = obsCodes.length ? ` Observers: ${obsCodes.join(", ")}.` : "";
+  loadedObsCodes = obsCodes;
 
   abortCtl = new AbortController();
   $("load").disabled = true; $("stop").disabled = false; $("csv").disabled = true;
@@ -651,6 +672,7 @@ async function load() {
 
     // 2. Page through the observations.
     const params = { ident: auid, data: pageSize, csv: true, band: bands.join(","), mtype: "std" };
+    if (obsCodes.length) params.obscode = obsCodes.join(",");
     if (isFinite(minjd)) { params.fromjd = minjd; params.tojd = maxjd; }
 
     let total = null;
@@ -671,9 +693,9 @@ async function load() {
     updateHjdHint();
 
     if (!obs.length) {
-      setStatus("No observations found for these parameters.");
+      setStatus("No observations found for these parameters." + obsNote);
     } else {
-      setStatus(`Done: ${obs.length} observations.`);
+      setStatus(`Done: ${obs.length} observations.` + obsNote);
       $("csv").disabled = false;
     }
     plot();
@@ -804,7 +826,8 @@ function exportCSV() {
   const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${(starMeta?.name || "aavso").replace(/\s+/g, "_")}_aid.csv`;
+  const who = loadedObsCodes.length ? "_" + loadedObsCodes.join("-") : "";
+  a.download = `${(starMeta?.name || "aavso").replace(/\s+/g, "_")}${who}_aid.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

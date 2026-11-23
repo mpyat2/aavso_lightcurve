@@ -143,7 +143,12 @@ Free plan, no server to maintain:
    | `I` | Cousins I | `GG` | Gaia G |
 
    The *Vis. + V* button restores the default selection.
-4. Click **Load**. Data are downloaded page by page (10 000 observations
+4. **Observer codes** (optional): load only observations by the given AAVSO
+   observers. Codes may be separated by commas, spaces or semicolons and
+   are converted to upper case; leave the field empty for all observers. As
+   in VStar, they are sent as `&obscode=<code1>,<code2>`. The codes
+   are added to the status line and to the CSV file name.
+5. Click **Load**. Data are downloaded page by page (10 000 observations
    per request by default) with a progress counter, and the plot is updated
    as pages arrive. **Stop** cancels the download and keeps what has been
    received.
@@ -250,7 +255,8 @@ Under **Connection**:
 
    ```
    index.php?view=api.object&ident=<AUID>&data=<N>&csv
-            &band=<b1,b2,…>&mtype=std[&fromjd=<min>&tojd=<max>]&page=<k>
+            &band=<b1,b2,…>&mtype=std[&fromjd=<min>&tojd=<max>]
+            [&obscode=<c1,c2,…>]&page=<k>
    ```
 
    Each response is XML with a `<Count>` element (total number of
