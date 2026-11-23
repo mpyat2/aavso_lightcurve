@@ -96,6 +96,7 @@
         <label><input type="radio" name="xmode" value="phase"> Phase</label>
       </div>
       <div class="opts">
+        <label><input type="checkbox" id="optReduced" checked> Time axis: JD − 2400000</label>
         <label><input type="checkbox" id="optHJD"> Convert JD → HJD</label>
       </div>
       <div id="hjdBox" class="off">
@@ -461,6 +462,7 @@ function updateHjdHint() {
 
 function onTimeSystemChange() { updateHjdHint(); updatePhaseHint(); obs.length && plot(); }
 $("optHJD").onchange = onTimeSystemChange;
+$("optReduced").onchange = () => obs.length && plot();
 ["ra", "dec"].forEach(id => $(id).oninput = onTimeSystemChange);
 updatePhaseHint();
 updateHjdHint();
@@ -707,6 +709,7 @@ function plot() {
   const phaseMode = xMode() === "phase" && eph.ok;
   const phStart = parseFloat($("phrange").value);
   const hjdOn = useHJD();
+  const jdOff = $("optReduced").checked ? 2400000 : 0;
 
   const groups = new Map();
   for (const o of obs) {
@@ -720,7 +723,7 @@ function plot() {
 
   // Each point -> one or two x positions (standard phase, and previous cycle if in range).
   const expand = pts => {
-    if (!phaseMode) return pts.map(p => ({ p, x: tOf(p) }));
+    if (!phaseMode) return pts.map(p => ({ p, x: tOf(p) - jdOff }));
     const out = [];
     for (const p of pts) {
       const c = (tOf(p) - eph.E) / eph.P;
@@ -751,7 +754,7 @@ function plot() {
                                 q.p.jd.toFixed(5), q.cyc ?? "", hjdOn ? tOf(q.p).toFixed(5) : ""]),
         hovertemplate:
           (phaseMode ? "φ %{x:.4f} (E%{customdata[6]})<br>JD %{customdata[5]}<br>" + (hjdOn ? "HJD %{customdata[7]}<br>" : "")
-                     : (hjdOn ? "HJD %{x:.5f}<br>JD %{customdata[5]}<br>" : "JD %{x:.5f}<br>")) +
+                     : (hjdOn ? "HJD %{customdata[7]}<br>JD %{customdata[5]}<br>" : "JD %{customdata[5]}<br>")) +
           "%{customdata[0]}<br>" +
           (g.fainter ? "&lt;" : "") + "%{y:.3f} %{customdata[2]}<br>" +
           "obs: %{customdata[1]} %{customdata[3]}<br>%{customdata[4]}<extra>" + g.band + "</extra>",
@@ -762,7 +765,19 @@ function plot() {
   const title = phaseMode ? `${name}  ·  P = ${eph.P} d, E = ${hjdOn ? "HJD" : "JD"} ${eph.E}` : name;
   const xaxis = phaseMode
     ? { title: "Phase", range: [phStart, 1], tickformat: phStart < -0.5 ? ".1f" : ".2f", dtick: phStart < -0.5 ? 0.2 : 0.1, zeroline: false }
-    : { title: hjdOn ? "HJD" : "JD", tickformat: ".1f", exponentformat: "none", zeroline: false };
+    : { title: (hjdOn ? "HJD" : "JD") + (jdOff ? " − 2400000" : ""),
+        exponentformat: "none", separatethousands: false, zeroline: false,
+        // Tick precision follows the zoom level (spacing between ticks, in days).
+        tickformatstops: [
+          // (ranges are inclusive, so upper bounds stop just below the next decade)
+          { dtickrange: [null, 0.0000099], value: ".6f" },
+          { dtickrange: [0.00001, 0.000099], value: ".5f" },
+          { dtickrange: [0.0001, 0.00099], value: ".4f" },
+          { dtickrange: [0.001, 0.0099], value: ".3f" },
+          { dtickrange: [0.01, 0.099], value: ".2f" },
+          { dtickrange: [0.1, 0.99], value: ".1f" },
+          { dtickrange: [1, null], value: ".0f" },
+        ] };
   Plotly.react("plot", traces, {
     title: { text: title, font: { size: 15 } },
     margin: { l: 60, r: 20, t: 40, b: 50 },
@@ -771,7 +786,7 @@ function plot() {
     legend: { orientation: "h", y: -0.15 },
     hovermode: "closest",
     // Keep zoom while P/E are tweaked; reset when star, mode or phase range changes.
-    uirevision: `${name}|${phaseMode}|${phaseMode ? phStart : ""}`,
+    uirevision: `${name}|${phaseMode}|${phaseMode ? phStart : jdOff}`,
   }, { responsive: true, displaylogo: false,
        toImageButtonOptions: { filename: (name || "lightcurve").replace(/\s+/g, "_") + (phaseMode ? "_phase" : "") } });
 }

@@ -152,6 +152,10 @@ Free plan, no server to maintain:
 
 - Interactive [Plotly](https://plotly.com/javascript/) chart (zoom, pan,
   PNG export from the toolbar); magnitude axis inverted.
+- The time axis shows **JD − 2400000** (or HJD − 2400000) by default;
+  untick *Time axis: JD − 2400000* to show full JD. Tick labels get as many
+  decimals as the zoom level needs (from whole days down to 10⁻⁶ d,
+  ≈0.1 s). Hover boxes always show the full JD/HJD.
 - Hovering a point shows JD, calendar date, magnitude ± uncertainty,
   observer code, observation type and comment.
 - Display options (applied instantly, no reload):
