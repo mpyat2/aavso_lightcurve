@@ -147,6 +147,7 @@
         <button type="submit" class="primary" id="load">Завантажити</button>
         <button type="button" id="stop" disabled>Стоп</button>
         <button type="button" id="csv" disabled>Зберегти CSV</button>
+        <button type="button" id="share" title="Скопіювати посилання з поточними налаштуваннями">Посилання</button>
       </div>
       <div id="status"></div>
 
@@ -306,7 +307,7 @@ $("apiTest").onclick = async () => {
     $("apiTestResult").textContent = name ? `OK: VSX відповідає (${name}).` : "Відповідь отримано, але без даних про зорю.";
   } catch (e) { $("apiTestResult").textContent = e.message; }
 };
-chooseApi();
+const apiReady = chooseApi();
 
 // JD <-> calendar date
 const jdNow = () => Date.now() / 86400000 + 2440587.5;
@@ -350,7 +351,7 @@ function getEphemeris() {
 }
 
 // Fill P and E from VSX; if VSX has P but no epoch, use the brightest observation.
-function fillEphemerisFromVsx() {
+function fillEphemerisFromVsx(onlyMissing = false) {
   const P = starMeta ? parseFloat(starMeta.period) : NaN;
   let E = starMeta ? parseFloat(starMeta.epoch) : NaN;
   let src = "VSX";
@@ -359,8 +360,8 @@ function fillEphemerisFromVsx() {
     for (const o of obs) if (!o.fainter && (!best || o.mag < best.mag)) best = o;
     if (best) { E = tOf(best); src = "VSX (P); E = найяскравіше спостереження"; }
   }
-  if (isFinite(P)) $("period").value = P;
-  if (isFinite(E)) $("epoch").value = E;
+  if (isFinite(P) && !(onlyMissing && $("period").value)) $("period").value = P;
+  if (isFinite(E) && !(onlyMissing && $("epoch").value)) $("epoch").value = E;
   phaseStar = starMeta ? starMeta.name : null;
   updatePhaseHint(isFinite(P) ? src : null);
 }
@@ -667,7 +668,14 @@ async function load() {
     };
     showInfo();
     const newStar = phaseStar !== starMeta.name;
-    if (newStar) { fillCoordsFromVsx(); fillEphemerisFromVsx(); }
+    if (newStar) {
+      fillCoordsFromVsx();
+      if (urlEphemeris) {          // P/E given in the page address: keep them
+        urlEphemeris = false;
+        fillEphemerisFromVsx(true);
+        updatePhaseHint("адреса сторінки");
+      } else fillEphemerisFromVsx();
+    }
     if (!auid) throw new Error(`«${starMeta.name}» є у VSX, але не має AUID, тож даних в AID немає.`);
 
     // 2. Page through the observations.
@@ -689,7 +697,7 @@ async function load() {
       if (cnt === "" || (total != null && obs.length >= total)) break;
       if (page === 1 || page % 3 === 0) plot();
     }
-    if (newStar && !getEphemeris().ok) fillEphemerisFromVsx();   // epoch fallback needs data
+    if (newStar && !getEphemeris().ok) fillEphemerisFromVsx(true);   // epoch fallback needs data
     updateHjdHint();
 
     if (!obs.length) {
@@ -836,6 +844,78 @@ function exportCSV() {
 $("form").onsubmit = e => { e.preventDefault(); load(); };
 $("stop").onclick = () => abortCtl && abortCtl.abort();
 $("csv").onclick = exportCSV;
+
+// ---------- Page address parameters ----------
+// ?star=V405+Dra&bands=V,CV&from=2460000&to=2461000&obscode=ABC&load=1
+// Also: days=N (last N days, 0 = all data), x=phase, period=, epoch=,
+//       hjd=1 (JD -> HJD), jd=full (full JD on the time axis), api=URL.
+let urlEphemeris = false;   // P/E came from the address; don't overwrite on first load
+function applyUrlParams() {
+  const P = new URLSearchParams(location.search), unknown = [];
+  if (P.has("star")) $("star").value = P.get("star").trim();
+  if (P.has("bands")) {
+    const norm = s => s.toLowerCase().replace(/\.$/, "");
+    const found = [];
+    for (const w of P.get("bands").split(/[\s,;]+/).filter(Boolean)) {
+      const b = BANDS.find(x => norm(x[0]) === norm(w));
+      if (b) found.push(b[0]); else unknown.push(`band ${w}`);
+    }
+    if (found.length) bandBoxes().forEach(cb => cb.checked = found.includes(cb.value));
+  }
+  if (P.has("days")) {
+    const d = parseFloat(P.get("days"));
+    if (isFinite(d) && d >= 0) setRange(d); else unknown.push(`days=${P.get("days")}`);
+  }
+  if (P.has("from") || P.has("to")) {
+    const from = parseFloat(P.get("from")), to = parseFloat(P.get("to"));
+    if (isFinite(from) && isFinite(to) && from < to) {
+      $("minjd").value = from; $("maxjd").value = to;
+      rangeButtons.forEach(b => b.classList.remove("sel"));
+      showDates();
+    } else unknown.push("from/to");
+  }
+  const oc = P.get("obscode") ?? P.get("obscodes");
+  if (oc != null) { $("obscodes").value = oc; $("obscodes").oninput(); }
+  if (P.get("x") === "phase") document.querySelector("input[name=xmode][value=phase]").checked = true;
+  for (const k of ["period", "epoch"])
+    if (P.has(k)) { $(k).value = P.get(k); urlEphemeris = true; }
+  if (P.get("hjd") === "1") $("optHJD").checked = true;
+  if (P.get("jd") === "full") $("optReduced").checked = false;
+  updatePhaseHint(urlEphemeris ? "адреса сторінки" : undefined);
+  updateHjdHint();
+  if (unknown.length) setStatus(`Не розпізнано в адресі сторінки: ${unknown.join(", ")}`, true);
+  if (P.get("load") === "1" && $("star").value.trim() && !unknown.length) apiReady.then(load);
+}
+
+// Build a link that reproduces the current settings.
+function shareUrl() {
+  const P = new URLSearchParams(), qp = new URLSearchParams(location.search);
+  P.set("star", $("star").value.trim());
+  P.set("bands", bandBoxes().filter(b => b.checked).map(b => b.value).join(","));
+  const sel = rangeButtons.find(b => b.classList.contains("sel"));
+  if (sel) P.set("days", sel.dataset.days);
+  else if ($("minjd").value && $("maxjd").value) { P.set("from", $("minjd").value); P.set("to", $("maxjd").value); }
+  else P.set("days", "0");
+  const oc = getObsCodes();
+  if (oc.length) P.set("obscode", oc.join(","));
+  if (xMode() === "phase") {
+    P.set("x", "phase");
+    if ($("period").value) P.set("period", $("period").value);
+    if ($("epoch").value) P.set("epoch", $("epoch").value);
+  }
+  if ($("optHJD").checked) P.set("hjd", "1");
+  if (!$("optReduced").checked) P.set("jd", "full");
+  if (qp.has("api")) P.set("api", qp.get("api"));
+  P.set("load", "1");
+  return location.href.split(/[?#]/)[0] + "?" + P.toString().replace(/%2C/gi, ",");
+}
+$("share").onclick = async () => {
+  const url = shareUrl();
+  try { await navigator.clipboard.writeText(url); setStatus("Посилання скопійовано:\n" + url); }
+  catch { setStatus("Скопіюйте посилання:\n" + url); }
+};
+
+applyUrlParams();
 </script>
 </body>
 </html>

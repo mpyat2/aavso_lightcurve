@@ -226,6 +226,38 @@ Switch **X axis** from *Time (JD)* to *Phase*.
 - If the period or epoch is missing or invalid, the time plot is shown and
   the hint asks for the values.
 
+### Links with settings (page address parameters)
+
+Settings can be passed in the page address, so a link can open the page
+with a star, bands and range already selected and, with `load=1`, load the
+data immediately:
+
+```
+https://mpyat2.github.io/aavso_lightcurve/aavso_lightcurve_en.html?star=V405+Dra&bands=V,CV&from=2460000&to=2461000&obscode=ABC&load=1
+```
+
+| Parameter | Meaning |
+|-----------|---------|
+| `star` | Star name or AUID; a space is written as `+` or `%20` |
+| `bands` | Band codes separated by commas, e.g. `Vis.,V,CV` (case and the trailing dot of `Vis.` are optional) |
+| `from`, `to` | JD range (both needed) |
+| `days` | Last N days instead of `from`/`to`; `days=0` = all data |
+| `obscode` | Observer codes separated by commas |
+| `load=1` | Load the data as soon as the page opens |
+| `x=phase` | Show the phase-folded curve |
+| `period`, `epoch` | Period (days) and epoch for folding; kept instead of the VSX values |
+| `hjd=1` | Convert JD → HJD |
+| `jd=full` | Full JD on the time axis instead of JD − 2400000 |
+| `api` | API endpoint (see *Which endpoint the page uses*) |
+
+Without `from`/`to`/`days` the default range (last 2 years) is used.
+Unknown band codes or an invalid range are reported and nothing is loaded.
+
+The **Link** button builds such an address from the current settings and
+copies it to the clipboard (on plain-http hosts, where browsers do not allow
+this, it is shown for copying by hand). A range chosen with a quick button
+is stored as `days=N`, so the link always shows the latest data.
+
 ### Export
 
 **Save CSV** writes the loaded observations to
