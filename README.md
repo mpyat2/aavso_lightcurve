@@ -226,6 +226,19 @@ Switch **X axis** from *Time (JD)* to *Phase*.
 - If the period or epoch is missing or invalid, the time plot is shown and
   the hint asks for the values.
 
+### Saved settings
+
+The page remembers the last settings in this browser (`localStorage`):
+star, bands, date range, observer codes, display options, X axis, period,
+epoch, coordinates for HJD and the request page size. They are saved on
+every change and restored on the next visit; both language versions on the
+same site share them. A range chosen with a quick button is remembered as
+"last N days", so it moves forward with time; JD values typed by hand are
+kept as they are. Parameters in the page address take priority over the
+saved values. **Reset** forgets the saved settings and reloads the page
+with the defaults (the API endpoint is kept separately; use **Auto** under
+Connection to forget it).
+
 ### Links with settings (page address parameters)
 
 Settings can be passed in the page address, so a link can open the page

@@ -148,6 +148,7 @@
         <button type="button" id="stop" disabled>Стоп</button>
         <button type="button" id="csv" disabled>Зберегти CSV</button>
         <button type="button" id="share" title="Скопіювати посилання з поточними налаштуваннями">Посилання</button>
+        <button type="button" id="resetSettings" title="Забути збережені налаштування й повернути початкові">Скинути</button>
       </div>
       <div id="status"></div>
 
@@ -717,6 +718,7 @@ async function load() {
     }
   } finally {
     $("load").disabled = false; $("stop").disabled = true;
+    saveSettings();   // keeps the P/E and coordinates filled in from VSX
   }
 }
 
@@ -915,7 +917,56 @@ $("share").onclick = async () => {
   catch { setStatus("Скопіюйте посилання:\n" + url); }
 };
 
+// ---------- Settings saved in this browser ----------
+// Saved on every change and after each load; restored on the next visit.
+// Parameters in the page address take priority over the saved values.
+const SETTINGS_KEY = "aavsoLcSettings";
+const CHECKS = { fainter: "optFainter", discrepant: "optDiscrepant", err: "optErr", hjd: "optHJD", reduced: "optReduced" };
+const FIELDS = { star: "star", obscodes: "obscodes", period: "period", epoch: "epoch", ra: "ra", dec: "dec", phrange: "phrange", pagesize: "pagesize" };
+let settingsReady = false;   // don't save while restoring
+
+function saveSettings() {
+  if (!settingsReady) return;
+  const s = { v: 1, bands: bandBoxes().filter(b => b.checked).map(b => b.value), xmode: xMode(), phaseStar };
+  for (const [k, id] of Object.entries(FIELDS)) s[k] = $(id).value;
+  for (const [k, id] of Object.entries(CHECKS)) s[k] = $(id).checked;
+  const sel = rangeButtons.find(b => b.classList.contains("sel"));
+  if (sel) s.days = +sel.dataset.days;
+  else { s.from = $("minjd").value; s.to = $("maxjd").value; }
+  store.set(SETTINGS_KEY, JSON.stringify(s));
+}
+let saveTimer = null;
+const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveSettings, 300); };
+["input", "change", "click"].forEach(ev => $("form").addEventListener(ev, saveSoon));
+
+function restoreSettings() {
+  let s;
+  try { s = JSON.parse(store.get(SETTINGS_KEY) || "null"); } catch { s = null; }
+  if (!s || s.v !== 1) return;
+  for (const [k, id] of Object.entries(FIELDS)) if (typeof s[k] === "string" && s[k] !== "") $(id).value = s[k];
+  for (const [k, id] of Object.entries(CHECKS)) if (typeof s[k] === "boolean") $(id).checked = s[k];
+  if (Array.isArray(s.bands) && s.bands.length) bandBoxes().forEach(cb => cb.checked = s.bands.includes(cb.value));
+  if (typeof s.days === "number") setRange(s.days);
+  else if (s.from && s.to) {
+    $("minjd").value = s.from; $("maxjd").value = s.to;
+    rangeButtons.forEach(b => b.classList.remove("sel"));
+    showDates();
+  }
+  if (s.xmode === "phase") document.querySelector("input[name=xmode][value=phase]").checked = true;
+  if (typeof s.phaseStar === "string") phaseStar = s.phaseStar;   // P/E/RA/Dec belong to this star
+  $("obscodes").oninput();
+  updatePhaseHint(); updateHjdHint();
+}
+
+$("resetSettings").onclick = () => {
+  store.set(SETTINGS_KEY, null);
+  location.href = location.href.split(/[?#]/)[0];   // reload without saved values or address parameters
+};
+
+restoreSettings();
 applyUrlParams();
+settingsReady = true;
+saveSettings();
 </script>
 </body>
 </html>
