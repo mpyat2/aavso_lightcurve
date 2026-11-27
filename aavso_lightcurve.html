@@ -93,6 +93,17 @@
         <label><input type="checkbox" id="optDiscrepant"> Discrepant (val = D/T)</label>
         <label><input type="checkbox" id="optErr" checked> Похибки</label>
       </div>
+      <div class="row" style="align-items:center;margin-top:4px">
+        <div style="flex:none;font-size:13px">Графіка</div>
+        <div>
+          <select id="render" title="SVG надійніший, WebGL швидший для дуже великих наборів даних">
+            <option value="auto" selected>Авто (SVG до 15 000 точок)</option>
+            <option value="svg">SVG</option>
+            <option value="webgl">WebGL</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint" id="renderHint"></div>
 
       <label>Вісь X</label>
       <div class="seg">
@@ -340,7 +351,7 @@ rangeButtons.forEach(b => b.onclick = () => setRange(+b.dataset.days));
 $("minjd").oninput = $("maxjd").oninput = () => { rangeButtons.forEach(b => b.classList.remove("sel")); showDates(); };
 setRange(DEFAULT_DAYS);
 
-["optFainter", "optDiscrepant", "optErr"].forEach(id => $(id).onchange = () => obs.length && plot());
+["optFainter", "optDiscrepant", "optErr", "render"].forEach(id => $(id).onchange = () => obs.length && plot());
 
 // ---------- Phase folding ----------
 const xMode = () => document.querySelector("input[name=xmode]:checked").value;
@@ -767,31 +778,48 @@ function plot() {
   };
 
   const order = b => { const i = BANDS.findIndex(x => x[0] === b); return i < 0 ? 999 : i; };
-  const traces = [...groups.entries()]
+  // Rendering: SVG ("scatter") is robust; WebGL ("scattergl") is fast for big data
+  // sets but in some browsers/GPUs hiding one trace via the legend makes all
+  // traces disappear, mostly because of its error bars. So WebGL is used only for
+  // large data (or on request), and there error bars are drawn as separate line
+  // traces in the same legend group instead of error_y.
+  const groupList = [...groups.entries()]
     .sort((a, b) => order(a[1].band) - order(b[1].band) || a[1].fainter - b[1].fainter || a[1].disc - b[1].disc)
-    .map(([key, g]) => {
-      const color = bandColor[g.band] || "#888";
-      const hasErr = showErr && !g.fainter && g.pts.some(p => p.err > 0);
-      const e = expand(g.pts);
-      return {
-        type: "scattergl", mode: "markers", name: `${key} (${g.pts.length})`,
-        x: e.map(q => q.x), y: e.map(q => q.p.mag),
-        error_y: hasErr ? { type: "data", array: e.map(q => q.p.err), visible: true, thickness: 1, width: 0, color } : undefined,
-        marker: {
-          size: g.fainter ? 7 : 5,
-          symbol: g.fainter ? "triangle-down-open" : (g.disc ? "x" : "circle"),
-          color, opacity: g.fainter || g.disc ? 0.55 : 0.85,
-        },
-        customdata: e.map(q => [jdToISO(q.p.jd), q.p.by, q.p.err ? "±" + q.p.err : "", q.p.obsType, q.p.comment,
-                                q.p.jd.toFixed(5), q.cyc ?? "", hjdOn ? tOf(q.p).toFixed(5) : ""]),
-        hovertemplate:
-          (phaseMode ? "φ %{x:.4f} (E%{customdata[6]})<br>JD %{customdata[5]}<br>" + (hjdOn ? "HJD %{customdata[7]}<br>" : "")
-                     : (hjdOn ? "HJD %{customdata[7]}<br>JD %{customdata[5]}<br>" : "JD %{customdata[5]}<br>")) +
-          "%{customdata[0]}<br>" +
-          (g.fainter ? "&lt;" : "") + "%{y:.3f} %{customdata[2]}<br>" +
-          "obs: %{customdata[1]} %{customdata[3]}<br>%{customdata[4]}<extra>" + g.band + "</extra>",
-      };
+    .map(([key, g]) => ({ key, g, e: expand(g.pts) }));
+  const nDraw = groupList.reduce((s, x) => s + x.e.length, 0);
+  const mode = $("render").value;
+  const useGL = mode === "webgl" || (mode === "auto" && nDraw > 15000);
+  $("renderHint").textContent = obs.length ? `Зараз: ${useGL ? "WebGL" : "SVG"}, ${nDraw} точок на графіку.` : "";
+
+  const traces = [];
+  for (const { key, g, e } of groupList) {
+    const color = bandColor[g.band] || "#888";
+    const hasErr = showErr && !g.fainter && g.pts.some(p => p.err > 0);
+    if (hasErr && useGL) {             // error bars as one line trace with gaps
+      const bx = [], by = [];
+      for (const q of e) if (q.p.err > 0) { bx.push(q.x, q.x, null); by.push(q.p.mag - q.p.err, q.p.mag + q.p.err, null); }
+      traces.push({ type: "scattergl", mode: "lines", x: bx, y: by, legendgroup: key, showlegend: false,
+                    hoverinfo: "skip", line: { color, width: 1 }, opacity: 0.6 });
+    }
+    traces.push({
+      type: useGL ? "scattergl" : "scatter", mode: "markers", name: `${key} (${g.pts.length})`, legendgroup: key,
+      x: e.map(q => q.x), y: e.map(q => q.p.mag),
+      error_y: hasErr && !useGL ? { type: "data", array: e.map(q => q.p.err), visible: true, thickness: 1, width: 0, color } : undefined,
+      marker: {
+        size: g.fainter ? 7 : 5,
+        symbol: g.fainter ? "triangle-down-open" : (g.disc ? "x" : "circle"),
+        color, opacity: g.fainter || g.disc ? 0.55 : 0.85,
+      },
+      customdata: e.map(q => [jdToISO(q.p.jd), q.p.by, q.p.err ? "±" + q.p.err : "", q.p.obsType, q.p.comment,
+                              q.p.jd.toFixed(5), q.cyc ?? "", hjdOn ? tOf(q.p).toFixed(5) : ""]),
+      hovertemplate:
+        (phaseMode ? "φ %{x:.4f} (E%{customdata[6]})<br>JD %{customdata[5]}<br>" + (hjdOn ? "HJD %{customdata[7]}<br>" : "")
+                   : (hjdOn ? "HJD %{customdata[7]}<br>JD %{customdata[5]}<br>" : "JD %{customdata[5]}<br>")) +
+        "%{customdata[0]}<br>" +
+        (g.fainter ? "&lt;" : "") + "%{y:.3f} %{customdata[2]}<br>" +
+        "obs: %{customdata[1]} %{customdata[3]}<br>%{customdata[4]}<extra>" + g.band + "</extra>",
     });
+  }
 
   const name = starMeta ? starMeta.name : "";
   const title = phaseMode ? `${name}  ·  P = ${eph.P} d, E = ${hjdOn ? "HJD" : "JD"} ${eph.E}` : name;
@@ -922,7 +950,7 @@ $("share").onclick = async () => {
 // Parameters in the page address take priority over the saved values.
 const SETTINGS_KEY = "aavsoLcSettings";
 const CHECKS = { fainter: "optFainter", discrepant: "optDiscrepant", err: "optErr", hjd: "optHJD", reduced: "optReduced" };
-const FIELDS = { star: "star", obscodes: "obscodes", period: "period", epoch: "epoch", ra: "ra", dec: "dec", phrange: "phrange", pagesize: "pagesize" };
+const FIELDS = { star: "star", obscodes: "obscodes", period: "period", epoch: "epoch", ra: "ra", dec: "dec", phrange: "phrange", pagesize: "pagesize", render: "render" };
 let settingsReady = false;   // don't save while restoring
 
 function saveSettings() {

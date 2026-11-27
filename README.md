@@ -169,6 +169,13 @@ Free plan, no server to maintain:
     (hidden by default);
   - **Error bars**.
 - Click legend entries to hide/show individual series.
+- **Rendering** (under *Show*): *Auto* draws with SVG up to 15 000 plotted
+  points and with WebGL above that; *SVG* or *WebGL* can be forced. SVG is the
+  most robust. With WebGL, some browser/GPU combinations used to make all
+  series disappear when one was hidden via the legend (a known Plotly
+  `scattergl` problem, mainly with error bars), so in WebGL mode error bars
+  are drawn as separate lines grouped with their series. If the plot still
+  misbehaves, choose *SVG*.
 
 ### JD → HJD conversion
 
